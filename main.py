@@ -78,6 +78,8 @@ class MainWindow(QMainWindow):
                 analysis = self.analyze_detection_results(results)
                 self.display_detection_result(analysis)
             else:
+                # 如果没有检测结果，也显示原图作为结果图
+                self.display_result_image(image_path)
                 self.display_detection_result("未检测到遛狗场景")
 
         except Exception as e:
@@ -137,14 +139,17 @@ class MainWindow(QMainWindow):
                     result_frame = self.detector.draw_detections_on_frame(frame, results)
                     self.display_cv_image(result_frame, self.ui.label_result)
 
-                    # 记录检测结果
-                    analysis = self.analyze_detection_results(results)
-                    self.video_results.append(analysis)
+                    # 记录检测结果（改为记录检测信息而不是文本）
+                    detection_info = self.detector.get_detection_info(results)
+                    self.video_results.append(detection_info)
 
                     # 更新状态
-                    self.ui.label_status.setText(f"检测中... 当前状态: {analysis}")
+                    current_status = self.analyze_detection_results(results)
+                    self.ui.label_status.setText(f"检测中... 当前状态: {current_status.split(chr(10))[0]}")
                 else:
                     self.display_cv_image(frame, self.ui.label_result)
+                    # 记录空结果
+                    self.video_results.append({"detections": [], "leash_detected": False, "dog_detected": False})
                     self.ui.label_status.setText("检测中... 未发现目标")
             else:
                 # 视频结束
@@ -158,29 +163,88 @@ class MainWindow(QMainWindow):
         # 使用检测器获取详细信息
         detection_info = self.detector.get_detection_info(results)
 
+        # 调试信息：打印检测到的对象
+        detections = detection_info["detections"]
+        detection_text = "检测到的对象: "
+        for det in detections:
+            detection_text += f"{det['class_name']}({det['confidence']:.2f}) "
+
         dog_detected = detection_info["dog_detected"]
         leash_detected = detection_info["leash_detected"]
 
-        if dog_detected:
-            if leash_detected:
-                return "文明遛狗：已牵绳"
-            else:
-                return "不文明遛狗：未牵绳"
+        # 根据你的实际类别进行判断
+        class_names = [det['class_name'].lower() for det in detections]
+
+        if any('withdog' in name for name in class_names) or (dog_detected and leash_detected):
+            return "文明遛狗：已牵绳\n" + detection_text
+        elif any('withoutdog' in name for name in class_names) or (dog_detected and not leash_detected):
+            return "不文明遛狗：未牵绳\n" + detection_text
+        elif dog_detected:
+            return "检测到狗狗但无法确定是否牵绳\n" + detection_text
         else:
-            return "未检测到狗狗"
+            return "未检测到狗狗\n" + detection_text
+
     def get_final_video_result(self):
         """获取视频的最终检测结果"""
         if not self.video_results:
             return "未检测到有效结果"
 
-        # 统计各种结果的出现次数
-        result_count = {}
-        for result in self.video_results:
-            result_count[result] = result_count.get(result, 0) + 1
+        # 统计各种检测结果
+        result_categories = []
+        class_count = {}
+        total_frames = len(self.video_results)
+        frames_with_dog = 0
+        frames_with_leash = 0
+        frames_with_detection = 0
 
-        # 返回出现最多的结果
-        final_result = max(result_count.items(), key=lambda x: x[1])
-        return f"最终检测结果: {final_result[0]} (出现{final_result[1]}次)"
+        for result in self.video_results:
+            # 统计检测类别
+            for detection in result["detections"]:
+                class_name = detection["class_name"]
+                class_count[class_name] = class_count.get(class_name, 0) + 1
+
+            # 统计检测状态
+            if result["detections"]:
+                frames_with_detection += 1
+            if result["dog_detected"]:
+                frames_with_dog += 1
+            if result["leash_detected"]:
+                frames_with_leash += 1
+
+            # 分类当前帧的结果
+            if result["dog_detected"]:
+                if result["leash_detected"]:
+                    result_categories.append("文明遛狗：已牵绳")
+                else:
+                    result_categories.append("不文明遛狗：未牵绳")
+            else:
+                result_categories.append("未检测到狗狗")
+
+        # 计算出现最多的结果
+        if result_categories:
+            final_category = max(set(result_categories), key=result_categories.count)
+            category_count = result_categories.count(final_category)
+        else:
+            final_category = "无检测结果"
+            category_count = 0
+
+        # 构建详细结果文本
+        result_text = f"视频检测完成！\n"
+        result_text += f"总帧数: {total_frames}\n"
+        result_text += f"有检测结果的帧数: {frames_with_detection}\n"
+        result_text += f"检测到狗狗的帧数: {frames_with_dog}\n"
+        result_text += f"检测到牵绳的帧数: {frames_with_leash}\n\n"
+        result_text += f"最终检测结果: {final_category} (出现{category_count}次)\n\n"
+        result_text += "检测到的对象统计:\n"
+
+        if class_count:
+            for class_name, count in class_count.items():
+                percentage = (count / total_frames) * 100
+                result_text += f"  {class_name}: {count}次 ({percentage:.1f}%)\n"
+        else:
+            result_text += "  未检测到任何对象\n"
+
+        return result_text
 
     def display_image(self, image_path, label):
         """显示图片到QLabel"""
@@ -206,7 +270,10 @@ class MainWindow(QMainWindow):
 
     def display_detection_result(self, result_text):
         """显示检测结果文本"""
-        self.ui.text_result.setText(result_text)
+        # 确保在主线程中更新UI
+        self.ui.text_result.setPlainText(result_text)
+        # 强制刷新UI
+        self.ui.text_result.repaint()
 
 
 def main():

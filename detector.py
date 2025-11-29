@@ -23,11 +23,15 @@ class DogLeashDetector:
         """加载YOLOv11模型"""
         try:
             if model_path is None:
+                # 只需要修改这个模型名称即可
+                model_name = "修改后的4580"  # 在这里改模型名字
+
                 # 尝试在默认路径查找模型
                 default_paths = [
                     'runs/detect/train/weights/best.pt',  # 你的训练模型路径
-                    'models/yolov11.pt',
-                    'yolov11.pt',
+                    f'D:/pycharm 项目库/遛狗不牵绳/models/{model_name}.pt',  # 你的模型库路径
+                    f'models/{model_name}.pt',
+                    f'{model_name}.pt',
                     'best.pt'
                 ]
                 for path in default_paths:
@@ -204,10 +208,19 @@ class DogLeashDetector:
                     "class_id": class_id
                 })
 
-                # 检查是否有牵绳和狗狗
-                if 'leash' in class_name.lower() or 'rope' in class_name.lower():
+                # 根据你的实际类别名称进行判断
+                class_name_lower = class_name.lower()
+
+                # 假设你的类别是：withdog(牵绳狗), withoutdog(未牵绳狗), leash(绳子)等
+                if 'withdog' in class_name_lower or 'leash' in class_name_lower or 'with_leash' in class_name_lower:
                     detection_info["leash_detected"] = True
-                if 'dog' in class_name.lower():
                     detection_info["dog_detected"] = True
+                elif 'withoutdog' in class_name_lower or 'no_leash' in class_name_lower:
+                    detection_info["dog_detected"] = True
+                    # leash_detected 保持 False
+                elif 'dog' in class_name_lower and 'leash' not in class_name_lower:
+                    detection_info["dog_detected"] = True
+                elif 'leash' in class_name_lower or 'rope' in class_name_lower:
+                    detection_info["leash_detected"] = True
 
         return detection_info
